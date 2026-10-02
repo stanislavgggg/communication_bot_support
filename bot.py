@@ -253,7 +253,18 @@ async def from_user(m: Message, bot: Bot):
         if row and row["chat_id"] == chat_id and row["group_msg_id"]:
             reply = ReplyParameters(message_id=row["group_msg_id"], allow_sending_without_reply=True)
 
-    thread_id = await ensure_topic(bot, chat_id, fu, route["key"])
+    try:
+        thread_id = await ensure_topic(bot, chat_id, fu, route["key"])
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        log.error("cannot create topic in %s: %s", chat_id, e)
+        await m.answer(T.pick(T.UNAVAILABLE, route.get("lang"), fu.language_code))
+        try:                                          # tell the team in General what is wrong
+            hint = " → give the bot admin right «Manage Topics»" if "rights" in str(e).lower() else ""
+            await bot.send_message(chat_id, f"⚠️ Could not open a topic for a new message: "
+                                            f"{html.escape(str(e))}{hint}")
+        except Exception:
+            pass
+        return
     sent = None
     for _ in range(3):
         try:
@@ -661,9 +672,10 @@ async def sync_profile(bot: Bot) -> str:
     targets = [(None, "en")] + [(l, l) for l in T.LANGS if l != "en"] + [(a, T.ALIASES[a]) for a in ("sr", "bs")]
     for code, src in targets:
         try:
+            desc = T.DESCRIPTION_DEFAULT if code is None else T.DESCRIPTION[src]
             cur = await bot.get_my_description(language_code=code)
-            if cur.description != T.DESCRIPTION[src]:
-                await bot.set_my_description(T.DESCRIPTION[src], language_code=code)
+            if cur.description != desc:
+                await bot.set_my_description(desc, language_code=code)
             cur = await bot.get_my_short_description(language_code=code)
             if cur.short_description != T.SHORT[src]:
                 await bot.set_my_short_description(T.SHORT[src], language_code=code)

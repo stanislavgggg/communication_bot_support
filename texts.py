@@ -96,6 +96,19 @@ DESCRIPTION = {
           "+18 · العب بمسؤولية.",
 }
 
+# shown before Start to everyone whose Telegram app language has no own version above
+# (Telegram has no official Lithuanian/Latvian/Bulgarian app, so most LT/LV/BG users land here)
+DESCRIPTION_DEFAULT = (
+    "👋 Official support for our Telegram channels.\n"
+    "Press START and write your question — we reply here.\n\n"
+    "🇱🇹 Spauskite START ir parašykite klausimą – atsakysime čia.\n"
+    "🇱🇻 Spiediet START un uzrakstiet jautājumu – atbildēsim šeit.\n"
+    "🇭🇷 Pritisnite START i napišite pitanje – odgovaramo ovdje.\n"
+    "🇧🇬 Натиснете START и напишете въпроса си – отговаряме тук.\n"
+    "🇪🇸 Pulsa START y escribe tu pregunta: respondemos aquí.\n\n"
+    "🔒 We never ask for passwords, card details or payments. 18+"
+)
+
 # reply to /start (per channel: the channel's language; /welcome key text overrides)
 WELCOME = {
     "en": "Hi! 👋 Write your question, problem or complaint — screenshots help a lot. Our team will reply right here.\n"
