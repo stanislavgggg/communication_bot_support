@@ -8,7 +8,7 @@ import os
 import pathlib
 
 from sqlalchemy import (BigInteger, Boolean, Column, DateTime, Integer, MetaData, String, Table, Text,
-                        delete, func, insert, select, update)
+                        delete, func, insert, select, text, update)
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
@@ -33,6 +33,8 @@ routes = Table(
     Column("chat_id", BigInteger, nullable=False),        # staff forum group
     Column("title", String(255)),
     Column("welcome", Text),
+    Column("away_text", Text),
+    Column("lang", String(8)),             # channel language → default welcome / auto-reply
 )
 users = Table(
     "users", md,
@@ -44,12 +46,15 @@ users = Table(
     Column("banned", Boolean, nullable=False, default=False),
     Column("created_at", DateTime),
     Column("last_seen", DateTime),
+    Column("last_away_at", DateTime),
 )
 threads = Table(
     "threads", md,
     Column("user_id", BigInteger, primary_key=True),
     Column("chat_id", BigInteger, primary_key=True),
     Column("thread_id", Integer, nullable=False),
+    Column("status", String(16)),          # open / resolved
+    Column("status_at", DateTime),
 )
 messages = Table(
     "messages", md,
@@ -66,6 +71,19 @@ messages = Table(
     Column("content_type", String(32)),
     Column("text", Text),
 )
+tags = Table(
+    "tags", md,                            # every #tag written in a topic = one event
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("created_at", DateTime),
+    Column("user_id", BigInteger, index=True),
+    Column("chat_id", BigInteger),
+    Column("tag", String(64)),
+    Column("staff_id", BigInteger),
+)
+
+# columns added after the first release — create_all does not alter existing tables
+MIGRATIONS = [("routes", "away_text", "TEXT"), ("routes", "lang", "VARCHAR(8)"), ("users", "last_away_at", "TIMESTAMP"),
+              ("threads", "status", "VARCHAR(16)"), ("threads", "status_at", "TIMESTAMP")]
 
 
 def now():
@@ -75,6 +93,12 @@ def now():
 async def init():
     async with engine.begin() as c:
         await c.run_sync(md.create_all)
+    for table, col, typ in MIGRATIONS:
+        try:
+            async with engine.begin() as c:
+                await c.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+        except Exception:
+            pass                                # column already exists
 
 
 async def _one(stmt):
@@ -104,6 +128,10 @@ async def set_route(key, chat_id, title):
         await _exec(update(routes).where(routes.c.key == key).values(chat_id=chat_id, title=title))
     else:
         await _exec(insert(routes).values(key=key, chat_id=chat_id, title=title))
+
+
+async def set_lang(key, lang):
+    await _exec(update(routes).where(routes.c.key == key).values(lang=lang))
 
 
 async def set_welcome(key, text):
@@ -173,3 +201,50 @@ async def message_counts(user_id):
     rows = await _all(select(messages.c.direction, func.count().label("n"))
                       .where(messages.c.user_id == user_id).group_by(messages.c.direction))
     return {r["direction"]: r["n"] for r in rows}
+
+
+# ── away auto-reply ──
+async def set_away_text(key, value):
+    await _exec(update(routes).where(routes.c.key == key).values(away_text=value))
+
+
+async def mark_away(user_id):
+    await _exec(update(users).where(users.c.user_id == user_id).values(last_away_at=now()))
+
+
+# ── status + tags ──
+async def get_thread_row(user_id, chat_id):
+    return await _one(select(threads).where(threads.c.user_id == user_id, threads.c.chat_id == chat_id))
+
+
+async def set_status(user_id, chat_id, status):
+    await _exec(update(threads).where(threads.c.user_id == user_id, threads.c.chat_id == chat_id)
+                .values(status=status, status_at=now()))
+
+
+async def add_tag(user_id, chat_id, tag, staff_id):
+    await _exec(insert(tags).values(created_at=now(), user_id=user_id, chat_id=chat_id, tag=tag, staff_id=staff_id))
+
+
+async def thread_tags(user_id, chat_id):
+    rows = await _all(select(tags.c.tag).where(tags.c.user_id == user_id, tags.c.chat_id == chat_id).distinct())
+    return {r["tag"] for r in rows}
+
+
+# ── bulk reads for /stats and /export ──
+async def all_users():
+    return await _all(select(users).order_by(users.c.created_at))
+
+
+async def all_threads():
+    return await _all(select(threads))
+
+
+async def messages_since(since=None):
+    q = select(messages).order_by(messages.c.created_at)
+    return await _all(q.where(messages.c.created_at >= since) if since else q)
+
+
+async def tags_since(since=None):
+    q = select(tags).order_by(tags.c.created_at)
+    return await _all(q.where(tags.c.created_at >= since) if since else q)
